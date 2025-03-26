@@ -1,62 +1,77 @@
+//web socket server
+
 const WebSocket = require('ws');
 
 const wss = new WebSocket.Server({ port: 8080 });
 
-let clients = new Map(); 
-let clientList = []; 
+let clients = new Map();
+let nextClientId = 1;
 
 wss.on('connection', (ws) => {
-    console.log('New client connected');
+  const clientId = `Client-${nextClientId++}`;
+  console.log(`${clientId} connected`);
+  
 
-    ws.on('message', (message) => {
-        const data = JSON.parse(message);
-        if (typeof data.number === 'number') {
-            clients.set(ws, data.number);
-            updateClientList();
-            debounceCheckAndBroadcast();
-        }
-    });
+  clients.set(ws, { 
+    id: clientId,
+    number: null 
+  });
 
-    ws.on('close', () => {
-        console.log('Client disconnected');
-        clients.delete(ws);
-        updateClientList();
-    });
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message);
+      if (typeof data.number === 'number') {
+        // Update the client's number while preserving ID
+        clients.set(ws, { 
+          ...clients.get(ws), 
+          number: data.number 
+        });
+        broadcastUpdates();
+      }
+    } catch (err) {
+      console.error('Message error:', err);
+    }
+  });
+
+  ws.on('close', () => {
+    console.log(`${clients.get(ws).id} disconnected`);
+    clients.delete(ws);
+    broadcastUpdates();
+  });
 });
 
-// Updates the sorted array for optimized check
-function updateClientList() {
-    clientList = Array.from(clients.entries()).map(([ws, num]) => ({ ws, num }));
-    clientList.sort((a, b) => a.num - b.num);
-}
+function broadcastUpdates() {
+  const activeClients = Array.from(clients.entries())
+    .filter(([ws]) => ws.readyState === WebSocket.OPEN)
+    .map(([ws, clientData]) => ({
+      ws,
+      ...clientData
+    }));
 
-// Debouncing to prevent too many checks
-let debounceTimeout;
-function debounceCheckAndBroadcast() {
-    clearTimeout(debounceTimeout);
-    debounceTimeout = setTimeout(checkAndBroadcast, 500);
-}
+  // Prepare updates for each client
+  const updates = new Map();
+  
+  activeClients.forEach(current => {
+    const closeClients = activeClients
+      .filter(other => 
+        other.id !== current.id && 
+        Math.abs(other.number - current.number) < 10
+      )
+      .map(c => c.id);
+    
+    updates.set(current.ws, closeClients);
+  });
 
-// Optimized check using two-pointer approach
-function checkAndBroadcast() {
-    const resultMap = new Map(); 
-    let i = 0, j = 0;
-    while (i < clientList.length) {
-        resultMap.set(clientList[i].ws, []);
-
-        while (j < clientList.length && clientList[j].num - clientList[i].num < 10) {
-            if (i !== j) {
-                resultMap.get(clientList[i].ws).push(`Client-${j + 1}`);
-            }
-            j++;
-        }
-        i++;
-    }
-
-    // Send updates
-    resultMap.forEach((closeClients, ws) => {
+  console.log(`Broadcasting to ${activeClients.length} clients`);
+  updates.forEach((closeClients, ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
         ws.send(JSON.stringify({ closeClients }));
-    });
+      } catch (err) {
+        console.error(`Error sending to ${clients.get(ws).id}:`, err);
+      }
+    }
+  });
 }
 
 console.log('WebSocket server running on ws://localhost:8080');

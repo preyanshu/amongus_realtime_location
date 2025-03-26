@@ -1,5 +1,5 @@
 //will use flutter app for this and will send longitudes and latitudes to the server instead of a single no
-
+//client-side
 const WebSocket = require('ws');
 
 const ws = new WebSocket('ws://localhost:8080');
